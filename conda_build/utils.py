@@ -1941,6 +1941,28 @@ def ensure_valid_spec(spec: str | MatchSpec, warn: bool = False) -> str | MatchS
     return spec
 
 
+# Discovery renders still pass requirements through MatchSpec, so the marker is
+# encoded as the build string of a valid three-part exact requirement.
+_DEFERRED_EXACT_SUBPACKAGE_PIN = "__conda_build_deferred_exact_subpackage_pin__"
+
+
+def _defer_exact_subpackage_pin(package_name: str) -> str:
+    return f"{package_name} 0 {_DEFERRED_EXACT_SUBPACKAGE_PIN}"
+
+
+def _is_deferred_exact_subpackage_pin(spec: str) -> bool:
+    parts = spec.split()
+    return (
+        len(parts) == 3
+        and parts[1] == "0"
+        and parts[2] == _DEFERRED_EXACT_SUBPACKAGE_PIN
+    )
+
+
+def _resolve_deferred_exact_subpackage_pin(spec: str) -> str:
+    return spec.split()[0] if _is_deferred_exact_subpackage_pin(spec) else spec
+
+
 def insert_variant_versions(requirements_dict, variant, env):
     build_deps = ensure_list(requirements_dict.get("build")) + ensure_list(
         requirements_dict.get("host")

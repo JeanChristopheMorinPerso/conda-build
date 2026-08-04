@@ -1,0 +1,17 @@
+package:
+  name: transitive-chain-output-variants
+  version: 1.0
+
+outputs:
+  - name: chain-provider
+    version: {{ provider_version }}
+
+  - name: chain-middle
+    requirements:
+      host:
+        - {{ pin_subpackage("chain-provider", exact=True) }}
+
+  - name: chain-final
+    requirements:
+      host:
+        - {{ pin_subpackage("chain-middle", exact=True) }}

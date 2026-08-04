@@ -264,6 +264,18 @@ def test_variants_propagate_through_exact_subpackage_pins():
     assert sum("variant-consumer" in output for output in outputs) == 2
 
 
+def test_deferred_subpackage_pins_do_not_escape_initial_render():
+    recipe = os.path.join(variants_dir, "15_transitive_output_variants")
+    metadata = api.render(recipe, finalize=False)
+    consumers = [item[0] for item in metadata if item[0].name() == "variant-consumer"]
+
+    assert len(consumers) == 2
+    assert all(
+        consumer.get_value("requirements/host") == ["variant-provider"]
+        for consumer in consumers
+    )
+
+
 def test_exact_subpackage_variants_do_not_depend_on_output_order():
     recipe = os.path.join(variants_dir, "15_reversed_transitive_output_variants")
     metadata = api.render(recipe)
@@ -289,6 +301,74 @@ def test_variants_do_not_propagate_through_unpinned_subpackage_dependencies():
     assert len(consumers) == 1
     assert consumers[0].get_value("requirements/host") == ["variant-provider"]
     assert sum("loose-variant-consumer" in output for output in outputs) == 1
+
+
+def test_variants_propagate_transitively_through_multiple_exact_pin_hops():
+    """A chain of exact pin_subpackage dependencies (provider -> middle -> final)
+    should carry the provider's variant dimension through every hop, even though
+    neither middle nor final reference the provider's variant key directly."""
+    recipe = os.path.join(variants_dir, "17_transitive_chain_output_variants")
+    metadata = api.render(recipe)
+    providers = {
+        item[0].version(): item[0]
+        for item in metadata
+        if item[0].name() == "chain-provider"
+    }
+    middles = [item[0] for item in metadata if item[0].name() == "chain-middle"]
+    finals = [item[0] for item in metadata if item[0].name() == "chain-final"]
+    outputs = api.get_output_file_paths(metadata)
+
+    assert len(providers) == 2
+    assert len(middles) == 2
+    assert len(finals) == 2
+
+    # Each middle output pins the correctly matched provider build.
+    middle_provider_pins = {
+        middle.get_value("requirements/host")[0] for middle in middles
+    }
+    assert middle_provider_pins == {
+        f"chain-provider {version} {provider.build_id()}"
+        for version, provider in providers.items()
+    }
+
+    # Each final output pins the correctly matched middle build, and that
+    # middle build in turn pins the correctly matched provider build.
+    middles_by_build_id = {middle.build_id(): middle for middle in middles}
+    for final in finals:
+        (pin,) = final.get_value("requirements/host")
+        pinned_name, pinned_version, pinned_build_id = pin.split()
+        assert pinned_name == "chain-middle"
+        matched_middle = middles_by_build_id[pinned_build_id]
+        assert matched_middle.version() == pinned_version
+        (middle_pin,) = matched_middle.get_value("requirements/host")
+        middle_pinned_name, middle_pinned_version, middle_pinned_build_id = (
+            middle_pin.split()
+        )
+        assert middle_pinned_name == "chain-provider"
+        assert providers[middle_pinned_version].build_id() == middle_pinned_build_id
+
+    assert sum("chain-provider" in output for output in outputs) == 2
+    assert sum("chain-middle" in output for output in outputs) == 2
+    assert sum("chain-final" in output for output in outputs) == 2
+
+
+def test_variants_do_not_propagate_through_compatible_subpackage_pins():
+    """A non-exact (compatible/range-style) pin_subpackage call does not encode the
+    provider's exact build identity - it collapses to a version range like
+    ">=1.0,<1.1" - so it must not trigger variant propagation, mirroring the
+    behavior for loose/bare dependencies."""
+    recipe = os.path.join(variants_dir, "18_compatible_pin_output_variants")
+    metadata = api.render(recipe)
+    consumers = [
+        item[0] for item in metadata if item[0].name() == "compatible-pin-consumer"
+    ]
+    outputs = api.get_output_file_paths(metadata)
+
+    assert len(consumers) == 1
+    (pin,) = consumers[0].get_value("requirements/host")
+    assert pin.split()[0] == "compatible-pin-provider"
+    assert len(pin.split()) == 2
+    assert sum("compatible-pin-consumer" in output for output in outputs) == 1
 
 
 def test_git_variables_with_variants(testing_config):

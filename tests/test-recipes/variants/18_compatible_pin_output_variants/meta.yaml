@@ -1,0 +1,12 @@
+package:
+  name: compatible-pin-output-variants
+  version: 1.0
+
+outputs:
+  - name: compatible-pin-provider
+    version: {{ provider_version }}
+
+  - name: compatible-pin-consumer
+    requirements:
+      host:
+        - {{ pin_subpackage("compatible-pin-provider") }}

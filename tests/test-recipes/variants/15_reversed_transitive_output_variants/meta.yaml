@@ -1,0 +1,12 @@
+package:
+  name: transitive-output-variants
+  version: 1.0
+
+outputs:
+  - name: variant-consumer
+    requirements:
+      host:
+        - {{ pin_subpackage("variant-provider", exact=True) }}
+
+  - name: variant-provider
+    version: {{ provider_version }}

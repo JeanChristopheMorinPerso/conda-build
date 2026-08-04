@@ -23,6 +23,7 @@ from .environ import get_dict as get_environ
 from .exceptions import CondaBuildException
 from .render import get_env_dependencies
 from .utils import (
+    _defer_exact_subpackage_pin,
     apply_pin_expressions,
     check_call_env,
     copy_into,
@@ -418,9 +419,7 @@ def pin_subpackage(
     pin = None
 
     if not hasattr(metadata, "other_outputs"):
-        if allow_no_other_outputs:
-            pin = subpackage_name
-        else:
+        if not allow_no_other_outputs:
             raise ValueError(
                 "Bug in conda-build: we need to have info about other outputs in "
                 "order to allow pinning to them.  It's not here."
@@ -442,7 +441,11 @@ def pin_subpackage(
             skip_build_id=skip_build_id,
         )
     if not pin:
-        pin = subpackage_name
+        pin = (
+            _defer_exact_subpackage_pin(str(subpackage_name))
+            if exact and allow_no_other_outputs and str(subpackage_name)
+            else subpackage_name
+        )
         if not permit_undefined_jinja and not allow_no_other_outputs:
             raise ValueError(
                 f"Didn't find subpackage version info for '{subpackage_name}', which is used in a"

@@ -1020,11 +1020,14 @@ def _direct_output_variant_key(metadata):
 
 
 def _output_variant_key(metadata, output, other_outputs=None):
-    used_vars = set(metadata.get_used_vars())
     if other_outputs is None:
         other_outputs = getattr(metadata, "other_outputs", {})
+    for (_, variant_key), (_, registered_metadata) in other_outputs.items():
+        if registered_metadata is metadata:
+            return variant_key
+
+    used_vars = set(metadata.get_used_vars())
     requirements = utils.expand_reqs(output.get("requirements", {}))
-    raw_requirements = None
     sibling_variants = {}
     for name, variant in other_outputs:
         sibling_variants.setdefault(name, []).append(variant)
@@ -1042,16 +1045,7 @@ def _output_variant_key(metadata, output, other_outputs=None):
             if not dependency_variants:
                 continue
             if len(requirement_parts) != 3:
-                if raw_requirements is None:
-                    raw_requirements = metadata.extract_requirements_text()
-                exact_pin_expression = re.search(
-                    rf"""pin_subpackage\s*\(\s*(['"])"""
-                    rf"{re.escape(dependency_name)}"
-                    rf"""\1\s*,[^)]*\bexact\s*=\s*True\b""",
-                    raw_requirements,
-                )
-                if not exact_pin_expression:
-                    continue
+                continue
             for variant in dependency_variants:
                 if all(
                     metadata.config.variant.get(key) == value
@@ -1061,6 +1055,19 @@ def _output_variant_key(metadata, output, other_outputs=None):
                     break
 
     return deepfreeze({key: metadata.config.variant[key] for key in used_vars})
+
+
+def _resolve_deferred_subpackage_pins(output):
+    if not output.get("requirements"):
+        return
+    requirements = utils.expand_reqs(output.get("requirements", {}))
+    for env in ("build", "host", "run"):
+        if env in requirements:
+            requirements[env] = [
+                utils._resolve_deferred_exact_subpackage_pin(requirement)
+                for requirement in requirements[env]
+            ]
+    output["requirements"] = requirements
 
 
 def _resolve_output_variant_keys(output_tuples):
@@ -1075,6 +1082,9 @@ def _resolve_output_variant_keys(output_tuples):
 
     for _, metadata in render_order:
         metadata.other_outputs = output_registry
+    for output_d, metadata in render_order:
+        _resolve_deferred_subpackage_pins(output_d)
+        _resolve_deferred_subpackage_pins(metadata.meta)
 
     return render_order, output_registry, variant_keys
 
