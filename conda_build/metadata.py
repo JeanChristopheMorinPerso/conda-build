@@ -1071,22 +1071,21 @@ def _resolve_deferred_subpackage_pins(output):
 
 
 def _resolve_output_variant_keys(output_tuples):
-    render_order = _toposort_outputs(output_tuples)
     output_registry = OrderedDict()
     variant_keys = {}
 
-    for output_d, metadata in render_order:
+    for output_d, metadata in output_tuples:
         variant_key = _output_variant_key(metadata, output_d, output_registry)
         output_registry[metadata.name(), variant_key] = (output_d, metadata)
         variant_keys[id(metadata)] = variant_key
 
-    for _, metadata in render_order:
+    for _, metadata in output_tuples:
         metadata.other_outputs = output_registry
-    for output_d, metadata in render_order:
+    for output_d, metadata in output_tuples:
         _resolve_deferred_subpackage_pins(output_d)
         _resolve_deferred_subpackage_pins(metadata.meta)
 
-    return render_order, output_registry, variant_keys
+    return output_registry, variant_keys
 
 
 def finalize_outputs_pass(
@@ -2806,8 +2805,10 @@ class MetaData:
                 " on the conda-build tracker at https://github.com/conda/conda-build/issues"
             )
 
-            render_order, all_output_metadata, variant_keys = (
-                _resolve_output_variant_keys(output_tuples)
+            render_order = _toposort_outputs(output_tuples)
+
+            all_output_metadata, variant_keys = _resolve_output_variant_keys(
+                render_order
             )
             ref_metadata.other_outputs = all_output_metadata
 
