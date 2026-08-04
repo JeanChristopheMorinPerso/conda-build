@@ -1,0 +1,12 @@
+package:
+  name: unpinned-output-variants
+  version: 1.0
+
+outputs:
+  - name: variant-provider
+    version: {{ provider_version }}
+
+  - name: loose-variant-consumer
+    requirements:
+      host:
+        - variant-provider

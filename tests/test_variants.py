@@ -251,6 +251,46 @@ def test_variants_in_versions_with_setup_py_data():
     )
 
 
+def test_variants_propagate_through_exact_subpackage_pins():
+    recipe = os.path.join(variants_dir, "15_transitive_output_variants")
+    metadata = api.render(recipe)
+    consumers = [item[0] for item in metadata if item[0].name() == "variant-consumer"]
+    outputs = api.get_output_file_paths(metadata)
+
+    assert {
+        consumer.get_value("requirements/host")[0].split()[1] for consumer in consumers
+    } == {"1.0", "2.0"}
+    assert sum("variant-provider" in output for output in outputs) == 2
+    assert sum("variant-consumer" in output for output in outputs) == 2
+
+
+def test_exact_subpackage_variants_do_not_depend_on_output_order():
+    recipe = os.path.join(variants_dir, "15_reversed_transitive_output_variants")
+    metadata = api.render(recipe)
+    consumers = [item[0] for item in metadata if item[0].name() == "variant-consumer"]
+    outputs = api.get_output_file_paths(metadata)
+
+    assert {
+        consumer.get_value("requirements/host")[0].split()[1] for consumer in consumers
+    } == {"1.0", "2.0"}
+    assert len(metadata) == 4
+    assert len(outputs) == len(metadata)
+    assert len(set(outputs)) == len(outputs)
+
+
+def test_variants_do_not_propagate_through_unpinned_subpackage_dependencies():
+    recipe = os.path.join(variants_dir, "16_unpinned_output_variants")
+    metadata = api.render(recipe)
+    consumers = [
+        item[0] for item in metadata if item[0].name() == "loose-variant-consumer"
+    ]
+    outputs = api.get_output_file_paths(metadata)
+
+    assert len(consumers) == 1
+    assert consumers[0].get_value("requirements/host") == ["variant-provider"]
+    assert sum("loose-variant-consumer" in output for output in outputs) == 1
+
+
 def test_git_variables_with_variants(testing_config):
     recipe = os.path.join(variants_dir, "13_git_vars")
     metadata = api.render(

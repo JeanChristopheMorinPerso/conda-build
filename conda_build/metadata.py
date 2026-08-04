@@ -1013,6 +1013,72 @@ def get_output_dicts_from_metadata(
     return outputs
 
 
+def _direct_output_variant_key(metadata):
+    return deepfreeze(
+        {key: metadata.config.variant[key] for key in metadata.get_used_vars()}
+    )
+
+
+def _output_variant_key(metadata, output, other_outputs=None):
+    used_vars = set(metadata.get_used_vars())
+    if other_outputs is None:
+        other_outputs = getattr(metadata, "other_outputs", {})
+    requirements = utils.expand_reqs(output.get("requirements", {}))
+    raw_requirements = None
+    sibling_variants = {}
+    for name, variant in other_outputs:
+        sibling_variants.setdefault(name, []).append(variant)
+
+    # An exact dependency on another output makes that output's variant part of
+    # this output's identity. Carry the dependency's complete key forward so
+    # chains of exact subpackage dependencies retain transitive variants as
+    # well. Loose dependencies do not encode the provider variant and must not
+    # split otherwise identical consumers.
+    for env in ("build", "host", "run"):
+        for requirement in requirements.get(env, []):
+            requirement_parts = requirement.split()
+            dependency_name = requirement_parts[0]
+            dependency_variants = sibling_variants.get(dependency_name)
+            if not dependency_variants:
+                continue
+            if len(requirement_parts) != 3:
+                if raw_requirements is None:
+                    raw_requirements = metadata.extract_requirements_text()
+                exact_pin_expression = re.search(
+                    rf"""pin_subpackage\s*\(\s*(['"])"""
+                    rf"{re.escape(dependency_name)}"
+                    rf"""\1\s*,[^)]*\bexact\s*=\s*True\b""",
+                    raw_requirements,
+                )
+                if not exact_pin_expression:
+                    continue
+            for variant in dependency_variants:
+                if all(
+                    metadata.config.variant.get(key) == value
+                    for key, value in variant.items()
+                ):
+                    used_vars.update(variant)
+                    break
+
+    return deepfreeze({key: metadata.config.variant[key] for key in used_vars})
+
+
+def _resolve_output_variant_keys(output_tuples):
+    render_order = _toposort_outputs(output_tuples)
+    output_registry = OrderedDict()
+    variant_keys = {}
+
+    for output_d, metadata in render_order:
+        variant_key = _output_variant_key(metadata, output_d, output_registry)
+        output_registry[metadata.name(), variant_key] = (output_d, metadata)
+        variant_keys[id(metadata)] = variant_key
+
+    for _, metadata in render_order:
+        metadata.other_outputs = output_registry
+
+    return render_order, output_registry, variant_keys
+
+
 def finalize_outputs_pass(
     base_metadata,
     render_order,
@@ -1074,7 +1140,7 @@ def finalize_outputs_pass(
             if not output_d.get("type") or output_d.get("type").startswith("conda"):
                 outputs[
                     fm.name(),
-                    deepfreeze({k: fm.config.variant[k] for k in fm.get_used_vars()}),
+                    _output_variant_key(fm, output_d),
                 ] = (output_d, fm)
         except DependencyNeedsBuildingError as e:
             if not permit_unsatisfiable_variants:
@@ -1087,12 +1153,7 @@ def finalize_outputs_pass(
                 )
                 outputs[
                     metadata.name(),
-                    deepfreeze(
-                        {
-                            k: metadata.config.variant[k]
-                            for k in metadata.get_used_vars()
-                        }
-                    ),
+                    _output_variant_key(metadata, output_d),
                 ] = (output_d, metadata)
     # in-place modification
     base_metadata.other_outputs = outputs
@@ -1101,7 +1162,7 @@ def finalize_outputs_pass(
     for k, (out_d, m) in outputs.items():
         final_outputs[
             m.name(),
-            deepfreeze({k: m.config.variant[k] for k in m.get_used_vars()}),
+            _output_variant_key(m, out_d),
         ] = (out_d, m)
     return final_outputs
 
@@ -1730,7 +1791,11 @@ class MetaData:
         # used variables - anything with a value in conda_build_config.yaml that applies to this
         #    recipe.  Includes compiler if compiler jinja2 function is used.
         """
-        dependencies = set(self.get_used_vars())
+        dependencies = set(
+            _output_variant_key(
+                self, {"requirements": self.meta.get("requirements", {})}
+            )
+        )
 
         trim_build_only_deps(self, dependencies)
 
@@ -2712,14 +2777,10 @@ class MetaData:
                         #    our outputs so that they can be referred to in later rendering.  We
                         #    also refine this collection as each output metadata object is
                         #    finalized - see the finalize_outputs_pass function
+                        output_variant_key = _direct_output_variant_key(out_metadata)
                         all_output_metadata[
                             out_metadata.name(),
-                            deepfreeze(
-                                {
-                                    k: out_metadata.config.variant[k]
-                                    for k in out_metadata.get_used_vars()
-                                }
-                            ),
+                            output_variant_key,
                         ] = (out, out_metadata)
                         output_tuples.append((out, out_metadata))
                         ref_metadata.other_outputs = out_metadata.other_outputs = (
@@ -2735,7 +2796,11 @@ class MetaData:
                 " on the conda-build tracker at https://github.com/conda/conda-build/issues"
             )
 
-            render_order: list[OutputTuple] = _toposort_outputs(output_tuples)
+            render_order, all_output_metadata, variant_keys = (
+                _resolve_output_variant_keys(output_tuples)
+            )
+            ref_metadata.other_outputs = all_output_metadata
+
             _check_circular_dependencies(render_order, config=self.config)
             conda_packages = OrderedDict()
             non_conda_packages = []
@@ -2747,7 +2812,7 @@ class MetaData:
                 ):
                     conda_packages[
                         m.name(),
-                        deepfreeze({k: m.config.variant[k] for k in m.get_used_vars()}),
+                        variant_keys[id(m)],
                     ] = (output_d, m)
                 elif output_d.get("type") == "wheel":
                     if not output_d.get("requirements", {}).get("build") or not any(

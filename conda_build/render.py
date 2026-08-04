@@ -69,7 +69,12 @@ from . import environ, exceptions, source, utils
 from .config import CondaPkgFormat
 from .exceptions import CondaBuildUserError, DependencyNeedsBuildingError, RecipeError
 from .index import get_build_index
-from .metadata import MetaData, MetaDataTuple, combine_top_level_metadata_with_output
+from .metadata import (
+    MetaData,
+    MetaDataTuple,
+    _output_variant_key,
+    combine_top_level_metadata_with_output,
+)
 from .utils import (
     CONDA_PACKAGE_EXTENSION_V1,
     package_record_to_requirement,
@@ -1155,18 +1160,16 @@ def render_metadata_tuples(
                         output_metas[
                             om.dist(),
                             om.config.variant.get("target_platform"),
-                            tuple(
-                                (var, om.config.variant[var])
-                                for var in om.get_used_vars()
+                            _output_variant_key(
+                                om, {"requirements": om.meta.get("requirements", {})}
                             ),
                         ] = MetaDataTuple(om, download, render_in_env)
                     else:
                         output_metas[
                             f"{om.type}: {om.name()}",
                             om.config.variant.get("target_platform"),
-                            tuple(
-                                (var, om.config.variant[var])
-                                for var in om.get_used_vars()
+                            _output_variant_key(
+                                om, {"requirements": om.meta.get("requirements", {})}
                             ),
                         ] = MetaDataTuple(om, download, render_in_env)
 
